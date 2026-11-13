@@ -1,0 +1,7 @@
+{
+  "name": "montajrabah-updater",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node fetch-products.mjs" },
+  "dependencies": { "firebase": "^11.0.0" }
+}
