@@ -1,24 +1,40 @@
 name: Update products
+
 on:
   schedule:
-    - cron: "0 4 * * *"   # every day 04:00 UTC
-  workflow_dispatch:       # manual run button
+    - cron: "0 4 * * *" # every day 04:00 UTC
+  workflow_dispatch: # manual run button
+
+permissions:
+  contents: write
+
 jobs:
   update:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
-      - run: npm install
-      - run: node fetch-products.mjs
+          node-version: "20"
+
+      - name: Fetch & score winning products from AliExpress
+        run: node fetch-products.mjs
         env:
           ALI_APP_KEY: ${{ secrets.ALI_APP_KEY }}
           ALI_APP_SECRET: ${{ secrets.ALI_APP_SECRET }}
           ALI_TRACKING_ID: ${{ secrets.ALI_TRACKING_ID }}
-          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
-          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
-          FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
-          UPDATER_EMAIL: ${{ secrets.UPDATER_EMAIL }}
-          UPDATER_PASSWORD: ${{ secrets.UPDATER_PASSWORD }}
+
+      - name: Commit and push updated products JSON
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/products.json data/history.json
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: update winning products ($(date -u +'%Y-%m-%d %H:%M UTC'))"
+            git push
+          fi
