@@ -57,136 +57,195 @@ function computeScore(p, growth) {
   };
 }
 
-function normalizeCategory(rawCategory = '', title = '') {
-  const c = (rawCategory || '').toLowerCase();
-  const t = (title || '').toLowerCase();
+// ---------------------------------------------------------------------------
+// Category classification
+// 1) Primary signal: AliExpress category names (first + second level) matched with
+//    WHOLE-WORD regexes (so "earphone" never matches "phone", "card" never matches "car").
+// 2) Secondary signal: the product title, only when the category names did not decide.
+// ---------------------------------------------------------------------------
+const CAT = {
+  PHONES: 'الهواتف والأجهزة اللوحية',
+  PHONE_ACC: 'ملحقات الهواتف والاتصالات',
+  SHOES: 'أحذية',
+  MEN: 'ملابس رجالية',
+  WOMEN: 'ملابس نسائية',
+  KIDS: 'ملابس أطفال',
+  UNISEX: 'ملابس للجنسين',
+  FASHION_ACC: 'مجوهرات وإكسسوارات الأزياء',
+  BAGS: 'حقائب ومستلزمات التنظيم',
+  WATCHES: 'ساعات وإكسسوارات ذكية',
+  STATIONERY: 'قرطاسية ومستلزمات مكتبية',
+  CAR: 'إكسسوارات ولوازم السيارات',
+  COMPUTER: 'الكمبيوتر والقطع والملحقات',
+  BEAUTY: 'العناية الشخصية والجمال',
+  KITCHEN: 'المطبخ وأدوات الطهي',
+  ELECTRONICS: 'إلكترونيات وأجهزة ذكية',
+  BATH: 'مستلزمات الحمام والتنظيم',
+  LIGHTING: 'إضاءة وديكور حديث',
+  TOOLS: 'أدوات ومعدات وتصليح',
+  SPORTS: 'رياضة وتخييم ولياقة',
+  TOYS: 'ألعاب ومستلزمات أطفال',
+  HOME: 'المنزل والديكور العصري',
+  OTHER: 'أخرى',
+};
 
-  // 1) Phones & Tablets
-  if (
-    c.includes('tablet') ||
-    t.includes('tablet') ||
-    t.includes('ipad') ||
-    t.includes('smartphone') ||
-    t.includes('cellphone') ||
-    (t.includes('phone') && (t.includes('android') || t.includes('unlocked') || t.includes('5g') || t.includes('4g') || /\bram\b/i.test(t) || t.includes('rom'))) ||
-    (c.includes('phone') && !c.includes('accessor') && (t.includes('phone') || t.includes('pro') || t.includes('ultra') || t.includes('mini')))
-  ) {
-    return 'الهواتف والأجهزة اللوحية';
+const KIDS_RE = /\b(kids?|children|child|baby|babies|toddlers?|infants?|newborns?|boys?|girls?|teens?|juniors?)\b/;
+const WOMEN_RE = /\b(women'?s?|womens|woman|ladies|lady|female|maternity)\b/;
+const MEN_RE = /\b(men'?s?|mens|man|male)\b/;
+
+const ACC_CAT = /accessor|parts|case|cover|holder|charger|cable|protector|film|stand|strap|lens|power bank|battery|sticker|skin|stylus|antenna|adapter|dock|mount|repair/;
+const ACC_TITLE = /\b(cases?|covers?|holders?|stands?|chargers?|cables?|protectors?|tempered|films?|straps?|power ?banks?|stickers?|skins?|mounts?|tripods?|gamepads?|coolers?|earphones?|headphones?|headsets?|earbuds?|replacement|repair)\b|\bfor (iphone|samsung|xiaomi|huawei|oppo|vivo|redmi|galaxy|phone|ipad|tablet)\b|\bcompatible with\b/;
+const HANDSET_TITLE = /\b(smart ?phones?|cell ?phones?|mobile phones?|iphone ?\d+|galaxy [a-z]?\d+|redmi|poco|realme|tecno|infinix|oppo|vivo|honor|oneplus|android phone|dual sim|unlocked phone|5g (smart)?phone|4g (smart)?phone|\d+ ?gb ram|\d+ ?gb rom|\d+gb\+\d+gb)\b/;
+
+const SHOES_RE = /\b(shoes?|sneakers?|boots?|sandals?|slippers?|loafers?|flip[- ]?flops?|high heels?|footwear|oxfords?|pumps|clogs|espadrilles|trainers)\b/;
+const SHOE_ACC = /\b(insoles?|shoelaces?|shoe ?laces?|shoe ?care|shoe ?racks?)\b|\b(shoe|boot|sneaker)s? (accessor|care|rack|organi[sz]er|cover|polish|tree|lace|insole|horn|storage|bag|box|cleaner|brush)/;
+
+const CLOTHES_CAT = /\b(clothing|clothes|apparel|dress(es)?|gowns?|shirts?|t-?shirts?|tees?|tops|blouses?|jackets?|coats?|parkas?|hoodies?|sweatshirts?|sweaters?|cardigans?|jeans|pants|trousers|shorts|skirts?|blazers?|vests?|underwear|panties|lingerie|sleepwear|pajamas|pyjamas|swimwear|bikinis?|leggings|jumpsuits?|rompers?|tracksuits?|sportswear|uniforms?)\b/;
+const CLOTHES_TITLE = /\b(dress(es)?|shirts?|t-?shirts?|tees?|blouses?|jackets?|coats?|hoodies?|sweatshirts?|sweaters?|cardigans?|jeans|pants|trousers|shorts|skirts?|blazers?|vests?|underwear|panties|lingerie|pajamas|pyjamas|swimsuits?|bikinis?|leggings|jumpsuits?|rompers?|tracksuits?|sportswear|clothing|clothes)\b/;
+
+const FASHION_ACC_CAT = /\bjewel(le)?ry\b|\bnecklaces?\b|\bbracelets?\b|\bearrings?\b|\bsunglasses\b|\bhair (accessories|clips?|bands?)\b|\bscarves?\b|\bhats?\b|\bcaps?\b|\bgloves?\b|\bbelts?\b|\bapparel accessor(y|ies)\b/;
+const BAGS_CAT = /\b(bags?|luggage|backpacks?|wallets?|suitcases?|handbags?|purses?)\b/;
+const BAGS_EXCL = /\b(sleeping|garbage|trash|tea|vacuum|plastic|shopping|gift|packaging)\b ?bags?/;
+
+const genderOf = (s) => (KIDS_RE.test(s) ? CAT.KIDS : WOMEN_RE.test(s) ? CAT.WOMEN : MEN_RE.test(s) ? CAT.MEN : null);
+
+function classify(first = '', second = '', title = '') {
+  const norm = (s) => String(s || '').toLowerCase().replace(/[’`]/g, "'");
+  const f = norm(first);
+  const s2 = norm(second);
+  const c = `${f} | ${s2}`;
+  const t = norm(title);
+  const hasCat = (f + s2).trim().length > 0;
+
+  if (hasCat) {
+    // A) Phones, tablets and phone accessories
+    const inPhones = /phones? (&|and) telecom/.test(c) || /\b(mobile phones?|cell ?phones?|smartphones?)\b/.test(c);
+    if (inPhones) {
+      if (!ACC_CAT.test(c) && /\b(mobile phones?|cell ?phones?|smartphones?)\b/.test(s2)) return CAT.PHONES;
+      if (HANDSET_TITLE.test(t) && !ACC_TITLE.test(t) && !ACC_CAT.test(c)) return CAT.PHONES;
+      return CAT.PHONE_ACC;
+    }
+    if (/\btablets?\b/.test(c) && !ACC_CAT.test(c)) return CAT.PHONES;
+
+    // B) Shoes
+    if (SHOES_RE.test(c) && !SHOE_ACC.test(c)) return CAT.SHOES;
+
+    // C) Jewelry & fashion accessories (before clothing: "Apparel Accessories")
+    if (FASHION_ACC_CAT.test(c)) return CAT.FASHION_ACC;
+
+    // D) Clothing by gender / age
+    if (CLOTHES_CAT.test(c)) {
+      const g = genderOf(c) || genderOf(t);
+      if (g) return g;
+      if (/\bunisex\b/.test(`${c} ${t}`)) return CAT.UNISEX;
+    }
+
+    // E) Bags & luggage
+    if (BAGS_CAT.test(c) && !BAGS_EXCL.test(c)) return CAT.BAGS;
+
+    // F) Watches & wearables
+    if (/\bwatch(es)?\b|\bsmart ?watch(es)?\b|\bsmart bands?\b|\bwearable/.test(c)) return CAT.WATCHES;
+
+    // G) Stationery
+    if (/\boffice (&|and) school\b|\bstationery\b|\bnotebooks?\b|\bpencils?\b|\bpens?\b|\bmarkers?\b/.test(c)) return CAT.STATIONERY;
+
+    // H) Cars & motorcycles
+    if (/\bautomobiles?\b|\bmotorcycles?\b|\bauto parts\b|\bcar\b|\bvehicles?\b/.test(c)) return CAT.CAR;
+
+    // I) Computers
+    if (/\bcomputer\b|\blaptops?\b|\bnetworking\b|\bmini pcs?\b|\bmonitors?\b|\bkeyboards?\b|\bmouse\b|\bmice\b|\bgraphics cards?\b|\bmotherboards?\b|\bstorage devices?\b|\bprinters?\b|\bflash drives?\b|\bhard drives?\b|\bwebcams?\b/.test(c)) return CAT.COMPUTER;
+
+    // J) Beauty & personal care (before kitchen/electronics: "Personal Care Appliances")
+    if (/\bbeauty\b|\bhealth\b|\bhair\b|\bmake-?up\b|\bskin ?care\b|\bnails?\b|\bpersonal care\b|\bwigs?\b|\bshav(er|ers|ing)\b|\bmassag(e|er)\b|\bperfumes?\b|\bcosmetics?\b/.test(c)) return CAT.BEAUTY;
+
+    // K) Kitchen
+    if (/\bkitchen\b|\bdining\b|\bcookware\b|\bbakeware\b|\bcooking\b|\btableware\b|\bdrinkware\b|\bcutlery\b|\bfood storage\b/.test(c)) return CAT.KITCHEN;
+
+    // L) Consumer electronics
+    if (/\bconsumer electronics\b|\bsmart electronics\b|\bportable audio\b|\bearphones?\b|\bheadphones?\b|\bheadsets?\b|\bearbuds?\b|\bspeakers?\b|\bcamera\b|\bphoto\b|\bhome audio\b|\bvideo games?\b|\bhome appliances?\b|\bsecurity (&|and) protection\b|\belectronic components\b|\bsmart home\b|\btv\b|\bprojectors?\b|\bgadgets?\b/.test(c)) return CAT.ELECTRONICS;
+
+    // M) Bathroom, cleaning, storage
+    if (/\bbath(room)?\b|\bshower\b|\btoilet\b|\bcleaning\b|\blaundry\b|\bhome storage\b|\borgani[sz](ation|ers?)\b/.test(c)) return CAT.BATH;
+
+    // N) Lighting & decor
+    if (/\blights?\b|\blighting\b|\blamps?\b|\bled\b|\bchandeliers?\b|\bhome decor\b|\bdecorations?\b|\bfestive\b|\bparty\b|\bcurtains?\b|\bwall (stickers?|art)\b/.test(c)) return CAT.LIGHTING;
+
+    // O) Tools
+    if (/\btools?\b|\bhardware\b|\bhome improvement\b|\bindustry\b|\bmachinery\b|\bwelding\b/.test(c)) return CAT.TOOLS;
+
+    // P) Sports
+    if (/\bsports?\b|\boutdoors?\b|\bfitness\b|\bcamping\b|\bcycling\b|\bfishing\b|\bhiking\b|\byoga\b|\bgym\b|\bentertainment\b|\bmusical instruments?\b/.test(c)) return CAT.SPORTS;
+
+    // Q) Toys & kids
+    if (/\btoys?\b|\bhobbies\b|\bbaby\b|\bkids?\b|\bmother\b|\bpuzzles?\b|\bdolls?\b|\bstrollers?\b|\bdiapers?\b|\bpregnancy\b/.test(c)) return CAT.TOYS;
+
+    // R) Home & garden
+    if (/\bhome (&|and) garden\b|\bhome textile\b|\bgarden\b|\bfurniture\b|\bpet products?\b|\bbeddings?\b/.test(c)) return CAT.HOME;
   }
 
-  // 2) PC & Computer Components
-  if (
-    c.includes('component') ||
-    t.includes('motherboard') ||
-    t.includes('graphics card') ||
-    t.includes('gpu') ||
-    t.includes('cpu') ||
-    t.includes('processor') ||
-    /\bram\b/i.test(t) ||
-    t.includes('ddr4') ||
-    t.includes('ddr5') ||
-    t.includes('nvme') ||
-    /\bssd\b/i.test(t) ||
-    t.includes('hard drive') ||
-    t.includes('cooling fan') ||
-    t.includes('power supply') ||
-    (/\bpc\b/i.test(t) && t.includes('case')) ||
-    (/\bpc\b/i.test(t) && t.includes('desktop')) ||
-    t.includes('laptop') ||
-    (c.includes('computer') && (/\bmouse\b/i.test(t) || t.includes('keyboard') || /\bpc\b/i.test(t) || t.includes('hub') || t.includes('dock') || t.includes('drive')))
-  ) {
-    return 'الكمبيوتر والقطع والملحقات';
+  // ---- Title fallback (strict whole words) ----
+  if (HANDSET_TITLE.test(t) && !ACC_TITLE.test(t)) return CAT.PHONES;
+  if (/\b(tablet|ipad)\b/.test(t) && !ACC_TITLE.test(t)) return CAT.PHONES;
+  if (/\bphone\b|\biphone\b|\bscreen protector\b|\bmagsafe\b/.test(t) && ACC_TITLE.test(t)) return CAT.PHONE_ACC;
+  if (SHOES_RE.test(t) && !SHOE_ACC.test(t)) return CAT.SHOES;
+  if (CLOTHES_TITLE.test(t)) {
+    const g = genderOf(t);
+    if (g) return g;
+    if (/\bunisex\b/.test(t)) return CAT.UNISEX;
   }
-
-  // 3) Car Accessories
-  if (c.includes('auto') || c.includes('car') || c.includes('motor') || t.includes('car') || t.includes('vehicle')) {
-    return 'إكسسوارات ولوازم السيارات';
-  }
-
-  // 4) Phone Accessories
-  if (c.includes('phone') || c.includes('telecom') || t.includes('phone') || t.includes('charger') || t.includes('cable') || t.includes('holder') || t.includes('screen protector')) {
-    return 'ملحقات الهواتف والاتصالات';
-  }
-
-  // 5) Smart Electronics
-  if (c.includes('electron') || t.includes('bluetooth') || t.includes('speaker') || t.includes('earphone') || t.includes('headphone') || t.includes('tws') || /\btv\b/i.test(t) || t.includes('humidifier') || t.includes('purifier')) {
-    return 'إلكترونيات وأجهزة ذكية';
-  }
-
-  // 6) Kitchen & Cooking
-  if (
-    c.includes('kitchen') ||
-    t.includes('kitchen') ||
-    t.includes('knife') ||
-    t.includes('cook') ||
-    t.includes('mug') ||
-    t.includes('cup') ||
-    t.includes('blender') ||
-    t.includes('slicer') ||
-    t.includes('peeler') ||
-    t.includes('grater') ||
-    t.includes('baking') ||
-    t.includes('tongs') ||
-    t.includes('sprayer') ||
-    t.includes('crusher') ||
-    t.includes('shredder') ||
-    t.includes('chopper') ||
-    t.includes('spatula') ||
-    t.includes('bakeware') ||
-    t.includes('fryer') ||
-    t.includes('fork') ||
-    t.includes('beater')
-  ) {
-    return 'المطبخ وأدوات الطهي';
-  }
-
-  // 7) Lighting & Decor
-  if (c.includes('light') || c.includes('lamp') || /\bled\b/i.test(t) || t.includes('light') || t.includes('lamp') || t.includes('strip') || t.includes('switch') || t.includes('sensor')) {
-    return 'إضاءة وديكور حديث';
-  }
-
-  // 8) Beauty & Personal Care
-  if (c.includes('beauty') || c.includes('health') || c.includes('hair') || t.includes('hair') || t.includes('trimmer') || t.includes('shaver') || t.includes('clipper') || t.includes('massage') || t.includes('facial') || t.includes('makeup')) {
-    return 'العناية الشخصية والجمال';
-  }
-
-  // 9) Tools & Equipment
-  if (c.includes('tool') || c.includes('improvement') || c.includes('industrial') || t.includes('blower') || t.includes('cleaner') || t.includes('brush') || t.includes('repair') || t.includes('drill') || t.includes('screwdriver') || t.includes('wrench')) {
-    return 'أدوات ومعدات وتصليح';
-  }
-
-  // 10) Smart Watches & Jewelry
-  if (c.includes('watch') || t.includes('watch') || t.includes('smartwatch') || c.includes('jewel') || c.includes('ring') || c.includes('necklace') || c.includes('bracelet') || c.includes('earring')) {
-    return 'ساعات وإكسسوارات ذكية';
-  }
-
-  // 11) Sports & Outdoors
-  if (c.includes('sport') || c.includes('outdoor') || t.includes('fitness') || t.includes('gym') || t.includes('camp') || t.includes('cycling') || t.includes('yoga') || t.includes('workout')) {
-    return 'رياضة وتخييم ولياقة';
-  }
-
-  // 12) Bags & Organizers
-  if (c.includes('bag') || c.includes('luggage') || t.includes('backpack') || t.includes('wallet') || t.includes('organizer') || t.includes('pouch') || t.includes('suitcase')) {
-    return 'حقائب ومستلزمات التنظيم';
-  }
-
-  // 13) Toys & Kids
-  if (c.includes('toy') || c.includes('kid') || c.includes('baby') || c.includes('mother') || t.includes('toy') || t.includes('puzzle') || t.includes('doll')) {
-    return 'ألعاب ومستلزمات أطفال';
-  }
-
-  // 14) Bathroom & Storage
-  if (c.includes('bath') || c.includes('shower') || t.includes('towel') || t.includes('soap') || t.includes('toilet') || t.includes('bathroom')) {
-    return 'مستلزمات الحمام والتنظيم';
-  }
-
-  // 15) Home & Decor
-  if (c.includes('garden') || c.includes('home') || t.includes('tissue') || /\bbox\b/i.test(t) || t.includes('decor') || /\bmat\b/i.test(t) || t.includes('tray') || t.includes('cover')) {
-    return 'المنزل والديكور العصري';
-  }
-
-  return rawCategory.trim() || 'أخرى';
+  if (/\b(backpack|handbag|wallet|suitcase|luggage|purse|crossbody|tote)\b/.test(t)) return CAT.BAGS;
+  if (/\b(smart ?watch|wristwatch|watch)\b/.test(t)) return CAT.WATCHES;
+  if (/\b(necklace|bracelet|earrings?|jewel(le)?ry|sunglasses)\b/.test(t)) return CAT.FASHION_ACC;
+  if (/\b(car|auto|vehicle|motorcycle)\b/.test(t)) return CAT.CAR;
+  if (/\b(mouse|keyboard|laptop|motherboard|ssd|monitor|webcam)\b/.test(t)) return CAT.COMPUTER;
+  if (/\b(earphones?|headphones?|earbuds?|tws|speaker|camera|projector)\b/.test(t)) return CAT.ELECTRONICS;
+  if (/\b(kitchen|cookware|blender|slicer|peeler|grater|spatula|mug)\b/.test(t)) return CAT.KITCHEN;
+  if (/\b(lamp|night light|chandelier|led strip)\b/.test(t)) return CAT.LIGHTING;
+  if (/\b(hair|trimmer|shaver|clipper|makeup|massager|skin ?care)\b/.test(t)) return CAT.BEAUTY;
+  if (/\b(drill|screwdriver|wrench|repair kit)\b/.test(t)) return CAT.TOOLS;
+  if (/\b(yoga|fitness|gym|camping|cycling|dumbbell|resistance bands?)\b/.test(t)) return CAT.SPORTS;
+  if (/\b(toys?|puzzle|dolls?)\b/.test(t)) return CAT.TOYS;
+  if (/\b(bathroom|towel|soap|shower|toilet)\b/.test(t)) return CAT.BATH;
+  if (/\b(organizer|storage box|storage bag)\b/.test(t)) return CAT.BAGS;
+  return CAT.OTHER;
 }
+
+// Phones: allowed in Algeria (checked by the site owner). They are ranked by sales
+// and are EXEMPT from the minimum-orders rule, but only the best sellers are kept.
+const MIN_ORDERS = 1000;
+const PHONE_MAX = 40;
+const PHONE_EXCLUDE = /\b(refurbished|renewed|used|second[- ]?hand|pre[- ]?owned)\b/i;
+
+// Find category ids by NAME at run time (ids may differ), with unverified fallbacks.
+async function resolveFashionCategories() {
+  const wanted = [
+    { name: "Women's Clothing", re: /^women'?s clothing$/i, fallback: '100003109', pages: 3 },
+    { name: "Men's Clothing", re: /^men'?s clothing$/i, fallback: '100003070', pages: 3 },
+    { name: 'Shoes', re: /^shoes$/i, fallback: '322', pages: 3 },
+    { name: 'Kids Clothing', re: /\b(boys?|girls?|baby|babies|kids?|children)\b.{0,12}clothing|clothing.{0,12}\b(boys?|girls?|baby|kids?)\b/i, multi: true, fallback: null, pages: 2 },
+  ];
+  let cats = [];
+  try {
+    const json = await callAliApi('aliexpress.affiliate.category.get', {});
+    cats = json?.aliexpress_affiliate_category_get_response?.resp_result?.result?.categories?.category || [];
+  } catch (err) {
+    console.warn('category.get failed:', err?.message || err);
+  }
+  console.log(`category.get returned ${cats.length} categories`);
+  const out = [];
+  for (const w of wanted) {
+    const hits = cats.filter((c) => w.re.test(String(c.category_name || '').replace(/[’`]/g, "'").trim()));
+    let ids = hits.map((c) => String(c.category_id));
+    if (!w.multi) ids = ids.slice(0, 1);
+    else ids = ids.slice(0, 4);
+    if (!ids.length && w.fallback) ids = [w.fallback];
+    if (!ids.length) { console.warn(`No category id found for ${w.name}`); continue; }
+    console.log(`Category "${w.name}" -> ${ids.join(',')}`);
+    out.push({ id: ids.join(','), pages: w.pages, name: w.name });
+  }
+  return out;
+}
+
 
 function sign(params) {
   const base = Object.keys(params)
@@ -272,6 +331,8 @@ async function main() {
     { id: '26,1501', pages: 3, name: 'Toys & Kids' },
   ];
 
+  TARGET_HOT_CATEGORIES.push(...(await resolveFashionCategories()));
+
   for (const cat of TARGET_HOT_CATEGORIES) {
     for (let page = 1; page <= cat.pages; page++) {
       hotTasks.push({
@@ -334,6 +395,11 @@ async function main() {
       'sports fitness gym workout resistance bands outdoor',
       'waterproof bluetooth speaker portable wireless sound',
       'portable blender usb rechargeable juice cup',
+      'men sneakers running shoes casual',
+      'women dress summer elegant',
+      'men t-shirt cotton hoodie',
+      'kids clothes baby boys girls set',
+      'women sandals slippers shoes',
     ];
 
     for (const kw of CATEGORIES_TO_SEARCH) {
@@ -368,9 +434,11 @@ async function main() {
 
   // Filter, deduplicate and sanitize
   const uniqueMap = new Map();
+  const phoneCandidates = [];
+  const seenPhones = new Set();
   for (const r of raw) {
     const id = String(r.product_id);
-    if (!id || uniqueMap.has(id)) continue;
+    if (!id || uniqueMap.has(id) || seenPhones.has(id)) continue;
 
     const link = r.promotion_link;
     if (!link || typeof link !== 'string' || !link.startsWith('http') || link.includes('www.aliexpress.com/item/undefined')) {
@@ -380,9 +448,25 @@ async function main() {
     if (RESTRICTED.test(r.product_title || '')) continue;
 
     const ordersCount = Number(r.lastest_volume) || 0;
-    if (ordersCount < 1000) continue;
+    const category = classify(r.first_level_category_name, r.second_level_category_name, r.product_title);
+    r.__category = category;
 
+    if (category === CAT.PHONES) {
+      if (PHONE_EXCLUDE.test(r.product_title || '')) continue; // no refurbished / used phones
+      seenPhones.add(id);
+      phoneCandidates.push(r); // decided below (ranked by sales, no minimum orders)
+      continue;
+    }
+
+    if (ordersCount < MIN_ORDERS) continue;
     uniqueMap.set(id, r);
+  }
+
+  // Phones: keep the best sellers only; those below the minimum are flagged as exempt
+  phoneCandidates.sort((x, y) => (Number(y.lastest_volume) || 0) - (Number(x.lastest_volume) || 0));
+  for (const r of phoneCandidates.slice(0, PHONE_MAX)) {
+    r.__exempt = (Number(r.lastest_volume) || 0) < MIN_ORDERS;
+    uniqueMap.set(String(r.product_id), r);
   }
 
   const items = Array.from(uniqueMap.values());
@@ -437,10 +521,7 @@ async function main() {
       title: r.product_title || 'منتج رابح',
       imageUrl: r.product_main_image_url || '',
       productUrl: r.promotion_link,
-      category: normalizeCategory(
-        r.first_level_category_name || r.second_level_category_name || '',
-        r.product_title || ''
-      ),
+      category: r.__category || CAT.OTHER,
       price: realPrice,
       originalPrice,
       orders: Number(r.lastest_volume) || 0,
@@ -468,6 +549,7 @@ async function main() {
     products.push({
       id,
       ...p,
+      minOrdersExempt: Boolean(r.__exempt),
       orders7dGrowth: growth === null ? null : Math.round(growth * 10) / 10,
       shippingToDZ: shippingVal,
       deliveryDays: null,
@@ -494,6 +576,14 @@ async function main() {
     count: products.length,
     products,
   };
+
+  // Diagnostics: category breakdown + sample of unclassified titles
+  const counts = {};
+  for (const pr of products) counts[pr.category] = (counts[pr.category] || 0) + 1;
+  console.log('Category breakdown:', JSON.stringify(counts, null, 2));
+  const unclassified = products.filter((pr) => pr.category === CAT.OTHER).slice(0, 15).map((pr) => pr.title);
+  if (unclassified.length) console.log('Unclassified (sample):', JSON.stringify(unclassified, null, 2));
+  console.log(`Phones kept: ${products.filter((pr) => pr.category === CAT.PHONES).length} (exempt from minimum orders: ${products.filter((pr) => pr.minOrdersExempt).length})`);
 
   fs.writeFileSync(productsPath, JSON.stringify(outputPayload, null, 2), 'utf8');
   fs.writeFileSync(historyPath, JSON.stringify(nextHistory), 'utf8');
