@@ -1,0 +1,54 @@
+# Put this file at: .github/workflows/telegram.yml in montajrab/montajrabah-updater
+# Required Repository Secrets: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (e.g. @your_channel)
+# Optional Repository Variable: USD_DZD_RATE (e.g. 250) to show an approximate price in DZD
+name: Post to Telegram
+
+on:
+  schedule:
+    - cron: "0 9,14,19 * * *" # 10:00, 15:00, 20:00 Algeria time (UTC+1) -> up to 3 posts a day
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Preview only (nothing is sent to Telegram)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Post products and coupons
+        run: node post-telegram.mjs
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SITE_URL: https://www.montajrabah.com
+          USD_DZD_RATE: ${{ vars.USD_DZD_RATE }}
+          MAX_POSTS: "1"
+          MAX_COUPONS: "1"
+          MIN_SCORE: "80"
+          DRY_RUN: ${{ inputs.dry_run }}
+
+      - name: Save posting history
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/posted.json
+          if git diff --staged --quiet; then
+            echo "Nothing to save"
+          else
+            git commit -m "chore: telegram posting history ($(date -u +'%Y-%m-%d %H:%M UTC'))"
+            git pull --rebase
+            git push
+          fi
