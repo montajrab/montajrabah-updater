@@ -60,8 +60,8 @@ function shortTitle(t, max = 70) {
 }
 
 const FOOTER =
-  '⚠️ السعر تقريبي وقد يختلف عند الشراء، والسكور تقدير وليس ضماناً للربح.\n' +
-  'روابط الأفلييت: قد نحصل على عمولة دون أي تكلفة إضافية عليك.';
+  '⚠️ السعر تقريبي وقد يختلف عند الشراء، .\n' +
+  '';
 
 function productCaption(p, titleMax = 70) {
   const price = Number(p.price);
@@ -103,7 +103,6 @@ function couponText(c) {
   lines.push(`👉 <a href="${esc(c.link)}">رابط العرض</a>`);
   lines.push('');
   lines.push('⚠️ شروط الكوبونات تتغير وقد تنتهي مبكراً. تحقق من الصفحة قبل الشراء.');
-  lines.push('روابط الأفلييت: قد نحصل على عمولة دون أي تكلفة إضافية عليك.');
   return lines.join('\n');
 }
 
