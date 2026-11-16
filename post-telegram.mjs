@@ -18,7 +18,7 @@ const {
   DRY_RUN,
 } = process.env;
 
-const MAX_POSTS = Math.max(0, parseInt(process.env.MAX_POSTS ?? '5', 10) || 0);
+const MAX_POSTS = Math.max(0, parseInt(process.env.MAX_POSTS ?? '50', 10) || 0);
 const MAX_COUPONS = Math.max(0, parseInt(process.env.MAX_COUPONS ?? '1', 10) || 0);
 const MIN_SCORE = parseInt(process.env.MIN_SCORE ?? '80', 10) || 80;
 const REPOST_DAYS = parseInt(process.env.REPOST_DAYS ?? '30', 10) || 30;
