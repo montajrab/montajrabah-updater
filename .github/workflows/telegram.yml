@@ -35,7 +35,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SITE_URL: https://www.montajrabah.com
           USD_DZD_RATE: ${{ vars.USD_DZD_RATE }}
-          MAX_POSTS: "1"
+          MAX_POSTS: "50"
           MAX_COUPONS: "1"
           MIN_SCORE: "80"
           DRY_RUN: ${{ inputs.dry_run }}
