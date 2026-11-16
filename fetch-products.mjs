@@ -214,6 +214,10 @@ function classify(first = '', second = '', title = '') {
 // and are EXEMPT from the minimum-orders rule, but only the best sellers are kept.
 const MIN_ORDERS = 1000;
 const PHONE_MAX = 40;
+const PHONE_MIN_ORDERS = 100;          // phones need at least this many orders
+const OFFICIAL_TYPES = new Set(['TMALL', 'PLAZA']); // AliExpress store types used as the "trusted seller" signal
+const PHONE_STRICT_OFFICIAL_MIN = 10;  // if at least this many official-store phones exist, keep ONLY them
+const PHONE_MIN_RATING_PCT = 94;       // fallback when official-store data is not available
 const PHONE_EXCLUDE = /\b(refurbished|renewed|used|second[- ]?hand|pre[- ]?owned)\b/i;
 
 // Find category ids by NAME at run time (ids may differ), with unverified fallbacks.
@@ -294,6 +298,20 @@ async function callAliApi(method, extra) {
   return lastJson;
 }
 
+// Find the list of generated links inside the API response (structure-tolerant)
+function findPromotionLinks(node) {
+  if (!node || typeof node !== 'object') return [];
+  if (node.promotion_links && node.promotion_links.promotion_link) {
+    const v = node.promotion_links.promotion_link;
+    return Array.isArray(v) ? v : [v];
+  }
+  for (const v of Object.values(node)) {
+    const r = findPromotionLinks(v);
+    if (r.length) return r;
+  }
+  return [];
+}
+
 async function main() {
   const raw = [];
   const apiErrors = [];
@@ -347,6 +365,26 @@ async function main() {
           sort: 'LAST_VOLUME_DESC',
         },
         label: `hotproduct-${cat.name}-p${page}`,
+      });
+    }
+  }
+
+  // 3) Phones from Tmall / Plaza stores (used for the trusted-seller rule)
+  for (const type of ['TMALL', 'PLAZA']) {
+    for (let page = 1; page <= 2; page++) {
+      hotTasks.push({
+        params: {
+          category_ids: '509',
+          platform_product_type: type,
+          page_no: String(page),
+          page_size: '50',
+          ship_to_country: 'DZ',
+          target_currency: 'USD',
+          target_language: 'EN',
+          tracking_id: ALI_TRACKING_ID,
+          sort: 'LAST_VOLUME_DESC',
+        },
+        label: `hotproduct-phones-${type}-p${page}`,
       });
     }
   }
@@ -453,6 +491,7 @@ async function main() {
 
     if (category === CAT.PHONES) {
       if (PHONE_EXCLUDE.test(r.product_title || '')) continue; // no refurbished / used phones
+      if (ordersCount < PHONE_MIN_ORDERS) continue;
       seenPhones.add(id);
       phoneCandidates.push(r); // decided below (ranked by sales, no minimum orders)
       continue;
@@ -462,10 +501,25 @@ async function main() {
     uniqueMap.set(id, r);
   }
 
-  // Phones: keep the best sellers only; those below the minimum are flagged as exempt
+  // Phones: at least PHONE_MIN_ORDERS orders AND a trusted seller; best sellers first.
+  const isOfficial = (r) => OFFICIAL_TYPES.has(String(r.platform_product_type || '').toUpperCase());
+  const ratingPct = (r) => parseFloat(r.evaluate_rate) || 0;
   phoneCandidates.sort((x, y) => (Number(y.lastest_volume) || 0) - (Number(x.lastest_volume) || 0));
-  for (const r of phoneCandidates.slice(0, PHONE_MAX)) {
+  const officialPhones = phoneCandidates.filter(isOfficial);
+  const strictOfficial = officialPhones.length >= PHONE_STRICT_OFFICIAL_MIN;
+  const trustedPhones = strictOfficial
+    ? officialPhones
+    : phoneCandidates.filter((r) => ratingPct(r) >= PHONE_MIN_RATING_PCT);
+  console.log(
+    `Phone candidates (>= ${PHONE_MIN_ORDERS} orders): ${phoneCandidates.length}; Tmall/Plaza stores: ${officialPhones.length}; ` +
+    `mode: ${strictOfficial ? 'OFFICIAL STORES ONLY' : `FALLBACK (rating >= ${PHONE_MIN_RATING_PCT}%, official-store data not available)`}`
+  );
+  const typeCounts = {};
+  for (const r of phoneCandidates) { const k = String(r.platform_product_type || 'missing'); typeCounts[k] = (typeCounts[k] || 0) + 1; }
+  console.log('Phone platform_product_type distribution:', JSON.stringify(typeCounts));
+  for (const r of trustedPhones.slice(0, PHONE_MAX)) {
     r.__exempt = (Number(r.lastest_volume) || 0) < MIN_ORDERS;
+    r.__sellerCheck = isOfficial(r) ? 'official' : 'rating';
     uniqueMap.set(String(r.product_id), r);
   }
 
@@ -481,6 +535,54 @@ async function main() {
 
   const historyPath = path.join(dataDir, 'history.json');
   const productsPath = path.join(dataDir, 'products.json');
+
+  // ---- Short affiliate links (portal style: https://s.click.aliexpress.com/e/_xxxx) ----
+  // The search API returns very long links; aliexpress.affiliate.link.generate returns short ones.
+  // Generated links are cached in data/links.json so each product gets one stable short link.
+  const linksPath = path.join(dataDir, 'links.json');
+  let linkCache = {};
+  try { linkCache = JSON.parse(fs.readFileSync(linksPath, 'utf8')) || {}; } catch { linkCache = {}; }
+  const isShortLink = (u) => /^https:\/\/s\.click\.aliexpress\.com\/e\/_[A-Za-z0-9]+$/.test(String(u || ''));
+  const currentIds = new Set(items.map((r) => String(r.product_id)));
+  for (const k of Object.keys(linkCache)) {
+    if (!currentIds.has(k) || !isShortLink(linkCache[k])) delete linkCache[k];
+  }
+  const cachedCount = Object.keys(linkCache).length;
+  const needLinks = items.filter((r) => !linkCache[String(r.product_id)]);
+  let generated = 0;
+  let linkFailures = 0;
+  for (let i = 0; i < needLinks.length; i += 50) {
+    const chunk = needLinks.slice(i, i + 50);
+    try {
+      const json = await callAliApi('aliexpress.affiliate.link.generate', {
+        promotion_link_type: '0',
+        source_values: chunk.map((r) => `https://www.aliexpress.com/item/${r.product_id}.html`).join(','),
+        tracking_id: ALI_TRACKING_ID,
+      });
+      const list = findPromotionLinks(json);
+      if (!list.length) {
+        linkFailures++;
+        console.warn('link.generate returned no links:', JSON.stringify(json).slice(0, 300));
+        if (/permission/i.test(JSON.stringify(json))) break; // do not keep retrying without permission
+        continue;
+      }
+      list.forEach((e, idx) => {
+        const m = String(e.source_value || '').match(/item\/(\d+)\.html/);
+        const id = m ? m[1] : (list.length === chunk.length ? String(chunk[idx].product_id) : null);
+        const link = String(e.promotion_link || '').replace(/^http:\/\//, 'https://');
+        if (id && currentIds.has(id) && isShortLink(link)) { linkCache[id] = link; generated++; }
+      });
+    } catch (err) {
+      linkFailures++;
+      console.warn('link.generate failed:', err?.message || err);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  for (const r of items) r.__shortLink = linkCache[String(r.product_id)] || null;
+  console.log(
+    `Short links: cached ${cachedCount}, generated ${generated}, failures ${linkFailures} -> ` +
+    `${items.filter((r) => r.__shortLink).length}/${items.length} products use a short link (others keep the long link)`
+  );
 
   let prevHistory = {};
   try {
@@ -520,7 +622,7 @@ async function main() {
     const p = {
       title: r.product_title || 'منتج رابح',
       imageUrl: r.product_main_image_url || '',
-      productUrl: r.promotion_link,
+      productUrl: r.__shortLink || r.promotion_link,
       category: r.__category || CAT.OTHER,
       price: realPrice,
       originalPrice,
@@ -550,6 +652,8 @@ async function main() {
       id,
       ...p,
       minOrdersExempt: Boolean(r.__exempt),
+      platformType: r.platform_product_type ? String(r.platform_product_type) : null,
+      ...(r.__sellerCheck ? { sellerCheck: r.__sellerCheck, shopUrl: r.shop_url ? String(r.shop_url) : null } : {}),
       orders7dGrowth: growth === null ? null : Math.round(growth * 10) / 10,
       shippingToDZ: shippingVal,
       deliveryDays: null,
@@ -587,6 +691,7 @@ async function main() {
 
   fs.writeFileSync(productsPath, JSON.stringify(outputPayload, null, 2), 'utf8');
   fs.writeFileSync(historyPath, JSON.stringify(nextHistory), 'utf8');
+  fs.writeFileSync(linksPath, JSON.stringify(linkCache), 'utf8');
 
   console.log(`Successfully saved ${products.length} winning products to data/products.json`);
 }
